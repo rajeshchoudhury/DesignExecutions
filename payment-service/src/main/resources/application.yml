@@ -1,0 +1,168 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: payment-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/payment_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+
+# ─── Eureka Client Configuration ──────────────────────────────────────────────
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+
+# ─── Payment Gateway Simulation Settings ──────────────────────────────────────
+
+payment:
+  gateway:
+    success-rate: 70
+    min-delay-ms: 100
+    max-delay-ms: 500
+    timeout-delay-ms: 5000
+
+# ─── Resilience4j Configuration ───────────────────────────────────────────────
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - java.lang.RuntimeException
+
+    instances:
+      paymentGateway:
+        base-config: default
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        slow-call-duration-threshold: 2s
+        slow-call-rate-threshold: 80
+        automatic-transition-from-open-to-half-open-enabled: true
+        minimum-number-of-calls: 5
+        event-consumer-buffer-size: 50
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - java.lang.RuntimeException
+
+      paymentGatewayRead:
+        base-config: default
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 70
+        wait-duration-in-open-state: 5s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 90
+        automatic-transition-from-open-to-half-open-enabled: true
+        minimum-number-of-calls: 3
+
+  bulkhead:
+    instances:
+      paymentGateway:
+        max-concurrent-calls: 10
+        max-wait-duration: 500ms
+
+  thread-pool-bulkhead:
+    instances:
+      paymentGateway:
+        core-thread-pool-size: 5
+        max-thread-pool-size: 10
+        queue-capacity: 20
+        keep-alive-duration: 20ms
+
+  retry:
+    instances:
+      paymentGateway:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - java.lang.RuntimeException
+        event-consumer-buffer-size: 50
+
+  timelimiter:
+    instances:
+      paymentGateway:
+        timeout-duration: 3s
+        cancel-running-future: true
+
+# ─── Actuator & Management ────────────────────────────────────────────────────
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,circuitbreakerevents,bulkheads,retries,retryevents
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ─── OpenAPI / Swagger ────────────────────────────────────────────────────────
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+
+logging:
+  level:
+    com.microservices.payment: DEBUG
+    io.github.resilience4j: DEBUG

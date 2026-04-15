@@ -1,0 +1,92 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: strangler-fig-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/strangler_db
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://admin:password@localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+strangler:
+  default-strategy: CANARY
+  gradual-migration-interval-ms: 300000
+  endpoints:
+    createOrder:
+      strategy: CANARY
+      modern-percent: 30
+    getOrder:
+      strategy: MODERN_ONLY
+      modern-percent: 100
+    updateOrder:
+      strategy: CANARY
+      modern-percent: 20
+    getAllOrders:
+      strategy: SHADOW
+      modern-percent: 50
+    deleteOrder:
+      strategy: LEGACY_ONLY
+      modern-percent: 0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.microservices.strangler: DEBUG
+    com.microservices.strangler.facade: DEBUG
+    com.microservices.strangler.interceptor: DEBUG
+    com.microservices.strangler.legacy: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId}] %-5level %logger{36} - %msg%n"
