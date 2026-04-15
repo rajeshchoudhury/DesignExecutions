@@ -1,0 +1,366 @@
+version: '3.9'
+
+services:
+  # ─────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE
+  # ─────────────────────────────────────────────────────────────
+
+  postgres-order:
+    image: postgres:16-alpine
+    container_name: postgres-order
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_order_data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_user -d order_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: postgres-payment
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: payment_user
+      POSTGRES_PASSWORD: payment_secret
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_payment_data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: postgres-notification
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: notification_secret
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_notification_data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-strangler:
+    image: postgres:16-alpine
+    container_name: postgres-strangler
+    environment:
+      POSTGRES_DB: strangler_db
+      POSTGRES_USER: strangler_user
+      POSTGRES_PASSWORD: strangler_secret
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_strangler_data:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U strangler_user -d strangler_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: inventory_db
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - microservices-net
+
+  # ─────────────────────────────────────────────────────────────
+  # APPLICATION SERVICES
+  # ─────────────────────────────────────────────────────────────
+
+  service-discovery:
+    build:
+      context: .
+      dockerfile: service-discovery/Dockerfile
+    container_name: service-discovery
+    ports:
+      - "8761:8761"
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://eureka:eureka_secret@localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+      SPRING_DATA_REDIS_HOST: redis
+    networks:
+      - microservices-net
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    container_name: order-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      postgres-order:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-order:5432/order_db
+      SPRING_DATASOURCE_USERNAME: order_user
+      SPRING_DATASOURCE_PASSWORD: order_secret
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - microservices-net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    container_name: payment-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      postgres-payment:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-payment:5432/payment_db
+      SPRING_DATASOURCE_USERNAME: payment_user
+      SPRING_DATASOURCE_PASSWORD: payment_secret
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - microservices-net
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+    container_name: inventory-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATA_MONGODB_HOST: mongodb
+      SPRING_DATA_MONGODB_PORT: 27017
+      SPRING_DATA_MONGODB_DATABASE: inventory_db
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - microservices-net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: notification-service
+    ports:
+      - "8084:8084"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      postgres-notification:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-notification:5432/notification_db
+      SPRING_DATASOURCE_USERNAME: notification_user
+      SPRING_DATASOURCE_PASSWORD: notification_secret
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - microservices-net
+
+  api-composition-service:
+    build:
+      context: .
+      dockerfile: api-composition-service/Dockerfile
+    container_name: api-composition-service
+    ports:
+      - "8085:8085"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+    networks:
+      - microservices-net
+
+  strangler-fig-service:
+    build:
+      context: .
+      dockerfile: strangler-fig-service/Dockerfile
+    container_name: strangler-fig-service
+    ports:
+      - "8086:8086"
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      postgres-strangler:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-strangler:5432/strangler_db
+      SPRING_DATASOURCE_USERNAME: strangler_user
+      SPRING_DATASOURCE_PASSWORD: strangler_secret
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:eureka_secret@service-discovery:8761/eureka/
+    networks:
+      - microservices-net
+
+volumes:
+  postgres_order_data:
+  postgres_payment_data:
+  postgres_notification_data:
+  postgres_strangler_data:
+  mongodb_data:
+  redis_data:
+  zookeeper_data:
+  kafka_data:
+
+networks:
+  microservices-net:
+    driver: bridge
+    name: microservices-net

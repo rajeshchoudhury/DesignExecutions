@@ -1,0 +1,101 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: api-composition-service
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://admin:password@localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+webclient:
+  connect-timeout-ms: 5000
+  read-timeout-s: 5
+  write-timeout-s: 5
+  pool:
+    max-connections: 100
+    max-idle-time-s: 30
+
+cache:
+  order-details:
+    ttl-seconds: 30
+  customer-dashboard:
+    ttl-seconds: 30
+  fulfillment-status:
+    ttl-seconds: 15
+  max-size: 500
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        sliding-window-type: COUNT_BASED
+        minimum-number-of-calls: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+    instances:
+      orderService:
+        base-config: default
+      paymentService:
+        base-config: default
+        failure-rate-threshold: 40
+      inventoryService:
+        base-config: default
+      notificationService:
+        base-config: default
+        failure-rate-threshold: 60
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+        cancel-running-future: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,caches
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.microservices.composition: DEBUG
+    org.springframework.web.reactive: WARN
+    io.github.resilience4j: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId}] %-5level %logger{36} - %msg%n"

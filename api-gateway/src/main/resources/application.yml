@@ -1,0 +1,129 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://localhost:4200"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
+            allowedHeaders:
+              - Authorization
+              - Content-Type
+              - X-API-Key
+              - X-Correlation-Id
+            allowCredentials: true
+            maxAge: 3600
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 10s
+        pool:
+          max-connections: 500
+          acquire-timeout: 10000
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000ms
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://admin:password@localhost:8761/eureka/
+    registry-fetch-interval-seconds: 5
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        sliding-window-type: COUNT_BASED
+        minimum-number-of-calls: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.server.ResponseStatusException
+    instances:
+      orderServiceCB:
+        base-config: default
+      paymentServiceCB:
+        base-config: default
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 15s
+      inventoryCB:
+        base-config: default
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+        cancel-running-future: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,gateway,circuitbreakers,circuitbreakerevents
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+
+gateway:
+  auth:
+    secret: ${GATEWAY_JWT_SECRET:default-secret-key-change-in-production}
+    open-endpoints:
+      - /api/auth/**
+      - /actuator/**
+      - /fallback/**
+      - /v3/api-docs/**
+      - /swagger-ui/**
+  cors:
+    allowed-origins:
+      - http://localhost:3000
+      - http://localhost:4200
+
+logging:
+  level:
+    root: INFO
+    com.microservices.gateway: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    io.github.resilience4j: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId}] %-5level %logger{36} - %msg%n"
