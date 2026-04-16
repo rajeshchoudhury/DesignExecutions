@@ -33,6 +33,7 @@
         <module>notification-service</module>
         <module>api-composition-service</module>
         <module>strangler-fig-service</module>
+        <module>design-principles-service</module>
     </modules>
 
     <properties>
